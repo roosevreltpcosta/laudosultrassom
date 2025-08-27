@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Controle de Laudos — Roosevelt</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🩻 </text></svg>">
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
+    body { background:#f8fafc; color:#0f172a; margin:0; }
+    .container{max-width:1100px;margin:0 auto;padding:24px;}
+    .card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;box-shadow:0 1px 2px rgba(0,0,0,.04);padding:16px;}
+    .btn{display:inline-flex;align-items:center;gap:8px;border:1px solid #cbd5e1;border-radius:10px;padding:10px 14px;background:#fff;cursor:pointer;font-size:15px}
+    .btn:hover{background:#f1f5f9}
+    .btn-primary{background:#0f172a;color:#fff;border-color:#0f172a}
+    .btn-primary:hover{background:#111827}
+    .input,.select,textarea{width:100%;border:1px solid #cbd5e1;border-radius:10px;padding:10px 12px;background:#fff;box-sizing:border-box;font-size:15px}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    .badge{display:inline-block;border:1px solid #e2e8f0;border-radius:999px;padding:4px 10px;font-size:12px}
+    .badge-pendente{background:#fef9c3;color:#854d0e;border-color:#fde68a}
+    .badge-andamento{background:#dbeafe;color:#1e40af;border-color:#bfdbfe}
+    .badge-concluido{background:#dcfce7;color:#166534;border-color:#bbf7d0}
+    table{width:100%;border-collapse:collapse;font-size:14px}
+    th{ text-align:left; color:#475569; font-weight:600 }
+    td,th{padding:8px 12px;border-bottom:1px solid #e2e8f0}
+    tr:hover{background:#f8fafc}
+    small.muted{color:#64748b}
+    .dialog{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;padding:16px}
+    .dialog .box{background:#fff;border-radius:16px;max-width:760px;width:100%;padding:16px;border:1px solid #e2e8f0}
+    .label{display:block;font-size:13px;color:#334155;margin-bottom:4px}
+    .req::after{content:" *";color:#dc2626}
+    .error{color:#dc2626;font-size:12px;margin-top:4px}
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/javascript">
+  const { useState, useEffect, useMemo } = React;
+  const STATUS = ['Pendente','Em andamento','Concluído'];
+  const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : (Date.now()+Math.random()).toString(36));
+  const randCode = () => String(Math.floor(100000 + Math.random()*900000));
+  function useLocal(key, initial){
+    const [st,setSt]=useState(()=>{ try{const r=localStorage.getItem(key); return r?JSON.parse(r):initial;}catch{return initial;} });
+    useEffect(()=>{ try{localStorage.setItem(key, JSON.stringify(st));}catch{} },[key,st]); return [st,setSt];
+  }
+  const Badge=({value})=>{ const m={'Pendente':'badge badge-pendente','Em andamento':'badge badge-andamento','Concluído':'badge badge-concluido'}; return React.createElement('span',{className:m[value]||'badge'},value) };
+
+  function App(){
+    const [adminPIN,setAdminPIN]=useLocal('admin-pin-roosevelt-standalone','1234');
+    const [clinicas,setClinicas]=useLocal('clinicas-roosevelt-standalone',[]);
+    const [laudos,setLaudos]=useLocal('laudos-roosevelt-standalone',[]);
+    const [logoDataUrl,setLogoDataUrl]=useLocal('logo-dataurl-roosevelt-standalone',null);
+
+    const [mode,setMode]=useState('welcome');
+    const [activeClinic,setActiveClinic]=useState(null);
+    const [snapshotLaudos,setSnapshotLaudos]=useState([]);
+
+    useEffect(()=>{ const p=new URLSearchParams(location.search).get('snapshot'); if(p){ try{const json=decodeURIComponent(atob(p)); const pay=JSON.parse(json); setActiveClinic(pay.clinica); setSnapshotLaudos(pay.laudos||[]); setMode('snapshot'); }catch{}} },[]);
+
+    const [query,setQuery]=useState(''); const [statusFilter,setStatusFilter]=useState('Todos');
+    const [editing,setEditing]=useState(null); const [draft,setDraft]=useState(null);
+    const [pin,setPin]=useState(''); const [code,setCode]=useState('');
+    const [formError,setFormError]=useState('');
+
+    const adminList=useMemo(()=> laudos.filter(l=>statusFilter==='Todos'||l.status===statusFilter).filter(l=>{ const q=query.trim().toLowerCase(); if(!q) return true; const clin=(clinicas.find(c=>c.id===l.clinicaId)||{}).nome||''; return clin.toLowerCase().includes(q)||(l.tutor||'').toLowerCase().includes(q)||(l.paciente||'').toLowerCase().includes(q)||(l.especie||'').toLowerCase().includes(q)}).sort((a,b)=>a.dataExame<b.dataExame?1:-1),[laudos,clinicas,statusFilter,query]);
+    const clinicList=useMemo(()=> mode==='snapshot'?[...snapshotLaudos].sort((a,b)=>a.dataExame<b.dataExame?1:-1): activeClinic? laudos.filter(l=>l.clinicaId===activeClinic.id).sort((a,b)=>a.dataExame<b.dataExame?1:-1):[],[mode,snapshotLaudos,activeClinic,laudos]);
+
+    function ensureClinicForNew(){
+      if(clinicas.length===0){
+        alert('Você precisa cadastrar uma clínica antes de criar laudos.');
+        const nome=prompt('Nome da clínica');
+        if(!nome) return false;
+        const nova={id:uuid(),nome,codigo:randCode()};
+        setClinicas(p=>[nova,...p]);
+      }
+      return true;
+    }
+
+    function openNew(){
+      if(!ensureClinicForNew()) return;
+      const firstId = (clinicas[0]||{}).id;
+      setEditing({isNew:true});
+      setDraft({id:uuid(),clinicaId:firstId||'',tutor:'',paciente:'',especie:'Cão',dataExame:new Date().toISOString().slice(0,10),status:'Pendente',linkPdf:'',observacoes:''});
+      setFormError('');
+    }
+    function openEdit(l){ setEditing({isNew:false}); setDraft({...l}); setFormError(''); }
+    function closeDlg(){ setEditing(null); setDraft(null); setFormError(''); }
+
+    function save(){
+      if(!draft.clinicaId || !draft.tutor || !draft.paciente){
+        setFormError('Preencha os campos obrigatórios: Clínica, Tutor e Paciente.');
+        return;
+      }
+      setLaudos(prev=>{ const e=prev.some(x=>x.id===draft.id); return e?prev.map(x=>x.id===draft.id?draft:x):[draft,...prev]; });
+      closeDlg();
+    }
+    function del(id){ if(confirm('Excluir este laudo?')) setLaudos(prev=>prev.filter(x=>x.id!==id)); }
+    function addClin(){ const nome=prompt('Nome da clínica'); if(!nome) return; const nova={id:uuid(),nome,codigo:randCode()}; setClinicas(p=>[nova,...p]); if(draft&&!draft.clinicaId) setDraft(d=>({...d,clinicaId:nova.id})); }
+    function regen(c){ const n={...c,codigo:randCode()}; setClinicas(p=>p.map(x=>x.id===c.id?n:x)); alert('Novo código: '+n.codigo); }
+    function snap(c){ const subset=laudos.filter(l=>l.clinicaId===c.id); const pay={clinica:c,laudos:subset}; const url=location.origin+location.pathname+'?snapshot='+btoa(encodeURIComponent(JSON.stringify(pay))); navigator.clipboard.writeText(url).then(()=>alert('Link copiado 🔗')); }
+
+    return React.createElement('div',{className:'container'},[
+      React.createElement('div',{className:'row',key:'hdr'},[ logoDataUrl?React.createElement('img',{src:logoDataUrl,alt:'Logo',style:{height:48}}):null, React.createElement('div',{style:{flex:1}},[ React.createElement('h1',{style:{margin:'0 0 4px'}},'Roosevelt Pontes Costa'), React.createElement('small',{className:'muted'},'Médico Veterinário Ultrassonográfista.') ]),
+        mode==='admin'?React.createElement(React.Fragment,null,[ React.createElement('button',{className:'btn btn-primary',onClick:openNew},'➕ Novo'), React.createElement('button',{className:'btn',onClick:()=>{ const headers=['id','Clínica','Tutor','Paciente','Espécie','Data do Exame','Status','Link do Laudo (PDF)','Observações']; const rows=laudos.map(l=>[l.id,(clinicas.find(c=>c.id===l.clinicaId)||{}).nome||'',l.tutor,l.paciente,l.especie,l.dataExame,l.status,l.linkPdf,(l.observacoes||'').replaceAll('\n',' ')]); const csv=[headers,...rows].map(r=>r.map(c=>`"${String(c??'').replaceAll('"','""')}"`).join(',')).join('\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const u=URL.createObjectURL(blob); const a=document.createElement('a'); a.href=u; a.download='controle-laudos.csv'; a.click(); URL.revokeObjectURL(u); }},'⬇️ Exportar'),
+        React.createElement('label',{className:'btn'},['⬆️ Importar', React.createElement('input',{type:'file',accept:'.csv',style:{display:'none'},onChange:e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ const t=String(r.result); const rows=t.split(/\r?\n/).filter(Boolean).map(l=>l.split(',')); if(rows.length<=1) return; const h=rows[0]; const idx=n=>h.findIndex(x=>x.replaceAll('"','').trim().toLowerCase()===n.toLowerCase()); const out=[]; for(let i=1;i<rows.length;i++){ const cols=rows[i].map(c=>c.replace(/^\"|\"$/g,'')); const clinNome=cols[idx('Clínica')]||''; const clinId=(clinicas.find(c=>c.nome===clinNome)||{}).id||(clinicas[0]||{}).id||''; out.push({id:cols[idx('id')]||uuid(),clinicaId:clinId,tutor:cols[idx('Tutor')]||'',paciente:cols[idx('Paciente')]||'',especie:cols[idx('Espécie')]||'',dataExame:cols[idx('Data do Exame')]||new Date().toISOString().slice(0,10),status:cols[idx('Status')]||'Pendente',linkPdf:cols[idx('Link do Laudo (PDF)')]||'',observacoes:cols[idx('Observações')]||''}); } setLaudos(prev=>{ const map=new Map(prev.map(p=>[p.id,p])); out.forEach(l=>map.set(l.id,l)); return Array.from(map.values()); }); alert('Importação concluída ✅'); }; r.readAsText(f,'utf-8'); e.target.value=''; }} )] ) ]):null
+      ]),
+
+      mode==='welcome' && React.createElement('div',{className:'card',style:{marginTop:16}},[
+        React.createElement('h3',null,'Bem-vindo'),
+        logoDataUrl?React.createElement('img',{src:logoDataUrl,alt:'Logo',style:{height:56}}):null,
+        React.createElement('p',null,'Escolha como entrar:'),
+        React.createElement('div',{className:'row'},[
+          React.createElement('input',{className:'input',placeholder:'PIN (padrão 1234)',type:'password',value:pin,onChange:e=>setPin(e.target.value),style:{maxWidth:240}}),
+          React.createElement('button',{className:'btn btn-primary',onClick:()=>{ if(pin===adminPIN){ setMode('admin'); setPin(''); } else alert('PIN incorreto'); }},'Entrar como Admin')
+        ]),
+        React.createElement('div',{className:'row',style:{marginTop:8}},[
+          React.createElement('input',{className:'input',placeholder:'Código da clínica',value:code,onChange:e=>setCode(e.target.value),style:{maxWidth:240}}),
+          React.createElement('button',{className:'btn',onClick:()=>{ const c=clinicas.find(x=>x.codigo===code.trim()); if(!c) return alert('Código inválido'); setActiveClinic(c); setMode('clinic'); setCode(''); }},'Entrar como Clínica')
+        ]),
+        React.createElement('p',null,React.createElement('small',{className:'muted'},'Dados locais. Para compartilhar externamente, gere snapshot ou use backend.'))
+      ]),
+
+      mode==='admin' && React.createElement(React.Fragment,null,[
+        React.createElement('div',{className:'row',style:{marginTop:16}},[
+          React.createElement('input',{className:'input',placeholder:'Buscar (clínica, tutor, paciente)',value:query,onChange:e=>setQuery(e.target.value),style:{maxWidth:320}}),
+          React.createElement('select',{className:'select',value:statusFilter,onChange:e=>setStatusFilter(e.target.value),style:{maxWidth:180}},[
+            React.createElement('option',{value:'Todos'},'Todos os status'),
+            ...STATUS.map(s=>React.createElement('option',{key:s,value:s},s))
+          ])
+        ]),
+        React.createElement('div',{className:'card',style:{marginTop:12}},[
+          adminList.length===0?React.createElement('div',{style:{padding:'32px',textAlign:'center'}},'Sem laudos. Clique em “Novo”.'):
+          React.createElement('div',{style:{overflowX:'auto'}},[
+            React.createElement('table',{className:'table'},[
+              React.createElement('thead',null,React.createElement('tr',null,[ 'Data','Clínica','Tutor','Paciente','Espécie','Status','Ações'].map(h=>React.createElement('th',{key:h},h)))),
+              React.createElement('tbody',null,adminList.map(l=>{
+                const clin=(clinicas.find(c=>c.id===l.clinicaId)||{}).nome||'—';
+                return React.createElement('tr',{key:l.id},[
+                  React.createElement('td',null,new Date(l.dataExame).toLocaleDateString()),
+                  React.createElement('td',{title:clin},clin),
+                  React.createElement('td',{title:l.tutor},l.tutor),
+                  React.createElement('td',{title:l.paciente},l.paciente),
+                  React.createElement('td',null,l.especie),
+                  React.createElement('td',null,React.createElement(Badge,{value:l.status})),
+                  React.createElement('td',null,React.createElement('div',{className:'row',style:{justifyContent:'flex-end'}},[
+                    React.createElement('button',{className:'btn',onClick:()=>openEdit(l)},'✏️'),
+                    React.createElement('button',{className:'btn',onClick:()=> l.linkPdf?window.open(l.linkPdf,'_blank'):alert('Sem link de PDF')},'🔗'),
+                    React.createElement('button',{className:'btn',onClick:()=>del(l.id)},'🗑️')
+                  ]))
+                ])
+              }))
+            ])
+          ])
+        ]),
+
+        React.createElement('div',{className:'card',style:{marginTop:12}},[
+          React.createElement('div',{className:'row',style:{justifyContent:'space-between'}},[
+            React.createElement('h3',null,'Clínicas & Códigos'),
+            React.createElement('button',{className:'btn',onClick:addClin},'➕ Nova clínica')
+          ]),
+          React.createElement('div',{style:{overflowX:'auto'}},[
+            React.createElement('table',{className:'table'},[
+              React.createElement('thead',null,React.createElement('tr',null,[ 'Nome','Código','Ações'].map(h=>React.createElement('th',{key:h},h)))),
+              React.createElement('tbody',null, clinicas.length===0? React.createElement('tr',null,React.createElement('td',{colSpan:3},React.createElement('small',{className:'muted'},'Nenhuma clínica'))): clinicas.map(c=>React.createElement('tr',{key:c.id},[
+                React.createElement('td',null,c.nome),
+                React.createElement('td',null,React.createElement('code',null,c.codigo)),
+                React.createElement('td',null,React.createElement('div',{className:'row',style:{justifyContent:'flex-end'}},[
+                  React.createElement('button',{className:'btn',onClick:()=>{navigator.clipboard.writeText(c.codigo);alert('Código copiado');}},'📋 Copiar'),
+                  React.createElement('button',{className:'btn',onClick:()=>regen(c)},'🔁 Regerar'),
+                  React.createElement('button',{className:'btn',onClick:()=>snap(c)},'🔗 Snapshot'),
+                  React.createElement('button',{className:'btn',onClick:()=>{ if(confirm('Remover clínica?')) setClinicas(prev=>prev.filter(x=>x.id!==c.id)); }},'🗑️ Remover')
+                ]))
+              ])))
+            ])
+          ])
+        ]),
+
+        React.createElement('div',{className:'card',style:{marginTop:12}},[
+          React.createElement('h3',null,'Configurações'),
+          React.createElement('div',{className:'row'},[
+            React.createElement('input',{className:'input',type:'password',placeholder:'PIN do Admin',value:adminPIN,onChange:e=>setAdminPIN(e.target.value),style:{maxWidth:220}})
+          ]),
+          React.createElement('div',{style:{marginTop:8}},[
+            logoDataUrl?React.createElement('img',{src:logoDataUrl,alt:'Logo',style:{height:56,border:'1px solid #e2e8f0',borderRadius:8,padding:4,background:'#fff'}}):React.createElement('small',{className:'muted'},'Nenhuma logo enviada'),
+            React.createElement('div',{className:'row',style:{marginTop:8}},[
+              React.createElement('label',{className:'btn'},['Selecionar logo',React.createElement('input',{type:'file',accept:'image/*',style:{display:'none'},onChange:e=>{ const f=e.target.files&&e.target.files[0]; if(!f) return; const r=new FileReader(); r.onload=()=>{ setLogoDataUrl(String(r.result)); alert('Logo atualizada ✅'); }; r.readAsDataURL(f); e.target.value=''; }})]),
+              logoDataUrl?React.createElement('button',{className:'btn',onClick:()=>setLogoDataUrl(null)},'Remover logo'):null
+            ])
+          ])
+        ])
+      ]),
+
+      (mode==='clinic'||mode==='snapshot') && React.createElement('div',{className:'card',style:{marginTop:16}},[
+        React.createElement('div',{className:'row',style:{justifyContent:'space-between'}},[
+          React.createElement('div',{className:'row'},[ logoDataUrl?React.createElement('img',{src:logoDataUrl,alt:'Logo',style:{height:40}}):null, React.createElement('h2',null,'Laudos — ', (activeClinic&&activeClinic.nome)||'Clínica') ]),
+          mode!=='snapshot'?React.createElement('button',{className:'btn',onClick:()=>{ setActiveClinic(null); setMode('welcome'); }},'Sair'):null
+        ]),
+        clinicList.length===0?React.createElement('div',{style:{padding:'32px',textAlign:'center'}},'Nenhum laudo disponível'):
+        React.createElement('div',{style:{overflowX:'auto'}},[
+          React.createElement('table',{className:'table'},[
+            React.createElement('thead',null,React.createElement('tr',null,['Data','Tutor','Paciente','Espécie','Status','Ações'].map(h=>React.createElement('th',{key:h},h)))),
+            React.createElement('tbody',null,clinicList.map(l=>React.createElement('tr',{key:l.id},[
+              React.createElement('td',null,new Date(l.dataExame).toLocaleDateString()),
+              React.createElement('td',{title:l.tutor},l.tutor),
+              React.createElement('td',{title:l.paciente},l.paciente),
+              React.createElement('td',null,l.especie),
+              React.createElement('td',null,React.createElement(Badge,{value:l.status})),
+              React.createElement('td',null,React.createElement('button',{className:'btn',onClick:()=> l.linkPdf?open(l.linkPdf,'_blank'):alert('Sem link de PDF')},'🔗'))
+            ])))
+          ])
+        ])
+      ]),
+
+      editing && React.createElement('div',{className:'dialog'},[
+        React.createElement('div',{className:'box'},[
+          React.createElement('div',{className:'row',style:{justifyContent:'space-between'}},[
+            React.createElement('h3',null, editing.isNew ? 'Novo laudo' : 'Editar laudo'),
+            React.createElement('button',{className:'btn',onClick:closeDlg},'✖️')
+          ]),
+          draft && React.createElement('div',{className:'row',style:{alignItems:'stretch'}},[
+            React.createElement('div',{style:{flex:1,minWidth:260}},[
+              React.createElement('label',{className:'label req'},'Clínica'),
+              React.createElement('select',{className:'select',value:draft.clinicaId,onChange:e=>setDraft({...draft,clinicaId:e.target.value})}, clinicas.map(c=>React.createElement('option',{key:c.id,value:c.id},c.nome))),
+            ]),
+            React.createElement('div',{style:{flex:1,minWidth:220}},[
+              React.createElement('label',{className:'label req'},'Tutor'),
+              React.createElement('input',{className:'input',value:draft.tutor,onChange:e=>setDraft({...draft,tutor:e.target.value})})
+            ]),
+            React.createElement('div',{style:{flex:1,minWidth:220}},[
+              React.createElement('label',{className:'label req'},'Paciente'),
+              React.createElement('input',{className:'input',value:draft.paciente,onChange:e=>setDraft({...draft,paciente:e.target.value})})
+            ]),
+          ]),
+          draft && React.createElement('div',{className:'row'},[
+            React.createElement('div',{style:{flex:1,minWidth:160}},[
+              React.createElement('label',{className:'label'},'Espécie'),
+              React.createElement('input',{className:'input',value:draft.especie,onChange:e=>setDraft({...draft,especie:e.target.value})})
+            ]),
+            React.createElement('div',{style:{flex:1,minWidth:160}},[
+              React.createElement('label',{className:'label'},'Data do exame'),
+              React.createElement('input',{type:'date',className:'input',value:draft.dataExame,onChange:e=>setDraft({...draft,dataExame:e.target.value})})
+            ]),
+            React.createElement('div',{style:{flex:1,minWidth:160}},[
+              React.createElement('label',{className:'label'},'Status'),
+              React.createElement('select',{className:'select',value:draft.status,onChange:e=>setDraft({...draft,status:e.target.value})}, STATUS.map(s=>React.createElement('option',{key:s,value:s},s)))
+            ]),
+          ]),
+          draft && React.createElement('div',null,[
+            React.createElement('label',{className:'label'},'Link do laudo (PDF)'),
+            React.createElement('input',{className:'input',placeholder:'https://...',value:draft.linkPdf,onChange:e=>setDraft({...draft,linkPdf:e.target.value})})
+          ]),
+          draft && React.createElement('div',null,[
+            React.createElement('label',{className:'label'},'Observações'),
+            React.createElement('textarea',{className:'input',rows:3,value:draft.observacoes,onChange:e=>setDraft({...draft,observacoes:e.target.value})})
+          ]),
+          formError?React.createElement('div',{className:'error'},formError):null,
+          React.createElement('div',{className:'row',style:{justifyContent:'flex-end'}},[
+            React.createElement('button',{className:'btn',onClick:closeDlg},'Cancelar'),
+            React.createElement('button',{className:'btn btn-primary',onClick:save},'Salvar')
+          ])
+        ])
+      ])
+    ]);
+  }
+  const root = ReactDOM.createRoot(document.getElementById('root'));
+  root.render(React.createElement(App));
+  </script>
+</body>
+</html>
